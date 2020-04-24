@@ -1,0 +1,63 @@
+#!/bin/bash
+
+ip=$1
+path="/etc/sysconfig/network-scripts"
+echo -n "Enter SSH password: "; read -s SSHPASS; echo '';
+echo -n "getting system info...."
+newmac=$(ifconfig $(cat /proc/net/wireless | grep : | sed s/:.*//) | grep -P -o  '(..:..:..:..:..:..)' | tr [a-f] [A-F])
+export SSHPASS;
+oldmac=$(sshpass -e ssh root@$ip 'ifconfig $(cat /proc/net/wireless | grep : | sed s/:.*//) | grep -P -o  "(..:..:..:..:..:..)" | tr [a-f] [A-F]')
+echo "done"
+echo "local MAC address: "$newmac
+echo "remote MAC address: "$oldmac
+echo -n "retriving networks...."
+remotenet=($(sshpass -e ssh root@$ip "ls $path | grep -P -o '(?=keys-)(.*)' | sed 's/keys-//'"))
+localnet=($(ls $path | grep -P -o '(?=keys-)(.*)' | sed 's/keys-//'))
+networks=()
+for remote in ${remotenet[@]};
+	do
+	exists=0
+	for local in ${localnet[@]};
+	do
+		if [ "$remote" == "$local" ]
+			then
+			exists=1
+			break
+		fi
+	done
+	if [ $exists -eq 0 ]
+		then
+		networks+=($remote)
+	fi
+done
+echo "done"		
+echo "importing the following unique networks:"
+echo "==============================================="		
+total=0
+for net in ${networks[@]};
+do
+	((total=total+1));
+	echo -e $total": "$net;
+done
+echo "==============================================="
+echo -n "Are you sure you want to continue? <y/N> "; read -N 1 prompt; echo "";
+	if [ "$prompt" != "y" ] && [ "$prompt" != "Y" ]
+		then
+		echo "exiting" 
+		exit 1
+	fi
+i=0
+for net in ${networks[@]};
+	do
+	((i=i+1)); 
+	echo -n "($i/$total) copying data...."	
+	sshpass -e scp root@$ip:$path/ifcfg-$net $path/ifcfg-$net;
+	sshpass -e scp root@$ip:$path/keys-$net $path/keys-$net;
+	echo "done"
+	echo -n "($i/$total) processing data...."
+	sed -i -e 's/$oldmac/$newmac/' $path/ifcfg-$net;
+	echo "done"
+	done
+echo "Restarting NetworkManager"
+systemctl restart NetworkManager;
+echo "Completed successfully!"
